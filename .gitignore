@@ -41,3 +41,5 @@ Thumbs.db
 # Slurm scratch
 slurm-*.out
 *.swp
+.codex
+PROJECT_STRUCTURE.md
