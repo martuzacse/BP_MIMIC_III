@@ -4,27 +4,20 @@ Estimating systolic (SBP) and diastolic (DBP) blood pressure from raw photopleth
 
 ---
 
-## Model
+## Model Architectures
 
-**BP_PINN** (`models/model.py`) — a Conv1D + Bidirectional LSTM architecture:
+The project explores several deep learning architectures for BP estimation:
 
-```
-Conv1D encoder (1→64→128 channels)
-      ↓
-BiLSTM (hidden=128, bidirectional → 256-dim output)
-      ↓
-Regressor (256×32 → 128 → 2)   [SBP, DBP in mmHg]
-```
-
-Model variants (`models/model_variants.py`):
-- **BP_TCN** — dilated residual temporal convolutional network
-- **BP_HybridTransformer** — Conv1D stem + 3-layer Transformer encoder
+*   **BP_PINN** (`models/model.py`): A hybrid architecture combining a Conv1D encoder for spatial features and a Bidirectional LSTM to capture temporal dynamics.
+*   **BP_AttentionBiLSTM** (`models/model_variants.py`): An evolution of BP_PINN that integrates multi-head self-attention to prioritize critical phases of the PPG pulse.
+*   **BP_TCN** (`models/model_variants.py`): A dilated residual Temporal Convolutional Network.
+*   **BP_HybridTransformer** (`models/model_variants.py`): A combination of a convolutional stem and a Transformer encoder.
 
 ---
 
 ## Dataset
 
-**MIMIC-III PPG dataset** (`data/MIMIC-III_ppg_dataset.h5`)
+The experiments are conducted using the **MIMIC-III PPG dataset** (`data/MIMIC-III_ppg_dataset.h5`).
 
 | Property | Value |
 |----------|-------|
@@ -34,133 +27,71 @@ Model variants (`models/model_variants.py`):
 | Input | Raw PPG waveform |
 | Labels | [SBP, DBP] in mmHg |
 
-HDF5 keys: `ppg`, `label`, `subject_idx`
+**HDF5 Structure:** `ppg` (signal), `label` (SBP/DBP), `subject_idx` (subject identification).
 
 ---
 
-## Experiments
+## Experiments & Results
 
-### 1. Loss Combination Study (cross-subject split, seed=42)
+### 1. Loss Function Optimization
+Investigated the impact of auxiliary loss terms (Pulse Pressure and Mean Arterial Pressure) alongside standard MSE.
 
-All three variants train the same BP_PINN with a different auxiliary loss term alongside MSE (λ_pp=0.1, λ_map=0.05).
+| Loss Configuration | SBP MAE | DBP MAE | AVG MAE | SBP R² | DBP R² |
+|--------------------|--------:|--------:|--------:|-------:|-------:|
+| Baseline MSE       | 15.03   | 8.11    | 11.57   | 0.3544 | 0.2572 |
+| MSE + λ_pp + λ_map | 15.02   | **8.08**| **11.55**| 0.3564 | **0.2610**|
 
-| Loss | SBP MAE | DBP MAE | AVG MAE | SBP R² | DBP R² |
-|------|--------:|--------:|--------:|-------:|-------:|
-| MSE only | 15.03 | 8.11 | 11.57 | 0.3544 | 0.2572 |
-| MSE + λ_pp · PP_MSE | 15.02 | 8.10 | 11.56 | 0.3564 | 0.2583 |
-| MSE + λ_map · MAP_MSE | 15.02 | 8.12 | 11.57 | 0.3570 | 0.2585 |
-| MSE + λ_pp · PP_MSE + λ_map · MAP_MSE | 15.02 | **8.08** | **11.55** | 0.3564 | **0.2610** |
-
-PP_MSE = pulse pressure constraint: (SBP − DBP)
-MAP_MSE = mean arterial pressure constraint: (SBP + 2·DBP) / 3
-
-**Finding:** auxiliary loss terms provide negligible gain at these weights — the bottleneck is the split strategy, not the loss.
-
-### 2. Architecture Comparison (cross-subject split, 3 seeds: 42/43/44)
+### 2. Architecture Benchmarking
+Compared the performance of different model architectures under consistent training conditions.
 
 | Model | AVG MAE | SBP MAE | DBP MAE | SBP R² | DBP R² |
 |-------|--------:|--------:|--------:|-------:|-------:|
-| BP_PINN (Bi-LSTM) | **11.55** | **15.02** | **8.08** | **0.356** | **0.261** |
-| BP_HybridTransformer | 14.71 ± 0.05 | 19.71 ± 0.05 | 9.71 ± 0.05 | 0.004 ± 0.009 | 0.002 ± 0.004 |
+| **BP_PINN (Bi-LSTM)** | **11.55** | **15.02** | **8.08** | **0.356** | **0.261** |
+| BP_HybridTransformer | 14.71 | 19.71 | 9.71 | 0.004 | 0.002 |
 
-**Finding:** Hybrid Transformer achieves R² ≈ 0 across all seeds (predicts near the population mean). BP_PINN is the best architecture.
+### 3. Split Strategy Analysis
+Analyzed the difference between cross-subject and within-subject data splitting.
 
-### 3. Within-Subject Split (BP_PINN, best loss: pp_map, seed=42)
-
-Each subject's 2,000 samples are split temporally:
-- Train: first 1,400 (70%)
-- Val: next 300 (15%)
-- Test: last 300 (15%)
-
-| Split | Loss | SBP MAE | DBP MAE | AVG MAE | SBP R² | DBP R² |
-|-------|------|--------:|--------:|--------:|-------:|-------:|
-| Cross-subject | pp_map | 15.02 | 8.08 | 11.55 | 0.3564 | 0.2610 |
-| **Within-subject** | **pp_map** | **12.82** | **7.27** | **10.05** | **0.5035** | **0.3977** |
-
-**Finding:** Within-subject split raises SBP R² by +0.15 and DBP R² by +0.14 vs cross-subject. Inter-subject variability is the main bottleneck.
+| Strategy | SBP MAE | DBP MAE | AVG MAE | SBP R² | DBP R² |
+|----------|--------:|--------:|--------:|-------:|-------:|
+| Cross-subject (Unseen subjects) | 15.02 | 8.08 | 11.55 | 0.3564 | 0.2610 |
+| **Within-subject**              | **12.82** | **7.27** | **10.05** | **0.5035** | **0.3977** |
 
 ---
 
-## Setup
+## Usage Guide
+
+### 1. Environment Setup
+The project relies on standard deep learning libraries: `torch`, `h5py`, `numpy`, `pandas`, and `matplotlib`.
+
+### 2. Training Models
+All experiments are managed through a unified entry point:
 
 ```bash
-conda activate rajgpu
+# Example: Training a TCN model with Within-Subject split and auxiliary loss
+python -m training.run_experiment \
+    --data_path ./data/MIMIC-III_ppg_dataset.h5 \
+    --model tcn \
+    --loss_mode pp_map \
+    --split within_subject
 ```
 
-Dependencies: `torch`, `h5py`, `numpy`
+### 3. Slurm Integration
+Batch submission scripts for cluster environments are available in the `slurm/` directory for each specific experimental configuration.
 
----
-
-## Running Experiments
-
-### Loss combination comparison (3 separate jobs)
-```bash
-sbatch slurm/submit_loss_mse.sh
-sbatch slurm/submit_loss_pp.sh
-sbatch slurm/submit_loss_map.sh
-sbatch slurm/submit_loss_pp_map.sh
-```
-
-### Within-subject split (best loss)
-```bash
-sbatch slurm/submit_within_subject.sh
-```
-
-### Architecture comparison
-```bash
-sbatch slurm/submit_tcn.sh
-sbatch slurm/submit_hybrid_transformer.sh
-```
-
-### Compare results
-```bash
-# Loss combinations
-python analysis/compare_loss_combo_runs.py --log_dir ./logs
-
-# Architecture runs
-python analysis/compare_architecture_runs.py --log_dir ./logs
-
-# Loss ablations (pp_mse / smoothl1 / scaled)
-python analysis/compare_ablation_runs.py --log_dir ./logs
-```
+### 4. Analysis & Visualization
+*   **Compare results:** `python analysis/compare_all_experiments.py` scans logs and generates a summary table.
+*   **Generate plots:** `python analysis/make_plots.py` creates publication-quality performance visualizations.
+*   **Visualize samples:** `python analysis/visualize_sample.py --index 0` renders individual PPG windows and their labels.
 
 ---
 
 ## Project Structure
 
-```
-BP_Project/
-├── models/
-│   ├── model.py               # BP_PINN (Bi-LSTM baseline)
-│   └── model_variants.py      # BP_TCN, BP_HybridTransformer
-├── training/
-│   ├── train.py                           # original baseline script
-│   ├── train_loss_combo_common.py         # shared loss combo trainer
-│   ├── train_loss_combo.py                # entry point (--loss_mode)
-│   ├── train_within_subject_common.py     # within-subject split trainer
-│   ├── train_within_subject.py            # entry point
-│   ├── train_ablation_common.py           # ablation trainer
-│   ├── train_pp_mse.py / train_pp_smoothl1.py / train_pp_mse_scaled.py
-│   ├── train_tcn.py / train_hybrid_transformer.py
-│   └── train_map.py
-├── analysis/
-│   ├── compare_loss_combo_runs.py
-│   ├── compare_ablation_runs.py
-│   ├── compare_architecture_runs.py
-│   ├── plot_results.py
-│   └── visualize_sample.py
-├── evaluation/
-│   └── generate_csv.py
-├── slurm/                     # all SBATCH submission scripts
-├── data/                      # MIMIC-III_ppg_dataset.h5
-├── checkpoints/               # saved model weights (.pth)
-└── logs/                      # training logs and history JSONs
-```
-
----
-
-## Metrics
-
-- **MAE** — mean absolute error (mmHg), primary metric
-- **RMSE** — root mean squared error (mmHg)
-- **R²** — coefficient of determination (higher = better; 1.0 is perfect)
+*   `models/`: PyTorch implementations of all architectures.
+*   `training/`: Unified training logic and split strategies.
+*   `analysis/`: Scripts for performance comparison and visualization.
+*   `evaluation/`: Inference scripts for generating detailed prediction CSVs.
+*   `slurm/`: SBATCH scripts for cluster execution.
+*   `logs/`: Training history, metrics, and generated figures.
+*   `data/`: Directory for the HDF5 dataset.
